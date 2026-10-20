@@ -1,8 +1,18 @@
 import { Link, useFocusEffect } from "expo-router";
 import { useCallback, useRef } from "react";
-import { Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useApiKey } from "@/hooks/useApiKey";
 import { useRecording } from "@/hooks/useRecording";
+import { useTranscription } from "@/hooks/useTranscription";
 
 export default function Index() {
   const { apiKey, loading: apiKeyLoading, error: apiKeyError, refresh } =
@@ -18,9 +28,15 @@ export default function Index() {
     isProcessing,
     openSettings,
   } = useRecording();
+  const transcription = useTranscription();
   const isRecording = state === "recording";
   const showSettingsButton =
     error?.code === "permission-denied" || error?.code === "settings-failed";
+
+  const startNewRecording = () => {
+    transcription.reset();
+    void start();
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -33,7 +49,7 @@ export default function Index() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.eyebrow}>VOICEAPP</Text>
         <Text style={styles.title}>Nagranie wywiadu</Text>
         <Text style={styles.description}>
@@ -97,7 +113,7 @@ export default function Index() {
             accessibilityRole="button"
             accessibilityLabel={isRecording ? "Zatrzymaj nagranie" : "Rozpocznij nagranie"}
             disabled={isProcessing}
-            onPress={isRecording ? stop : start}
+            onPress={isRecording ? stop : startNewRecording}
             style={({ pressed }) => [
               styles.recordButton,
               isRecording && styles.stopButton,
@@ -144,7 +160,78 @@ export default function Index() {
             <Text style={styles.resultText}>Typ: {recording.mimeType}</Text>
           </View>
         )}
-      </View>
+
+        <Pressable
+          accessibilityRole="button"
+          disabled={!recording || transcription.status === "loading"}
+          onPress={() => {
+            if (recording) {
+              void transcription.run(recording, apiKey);
+            }
+          }}
+          style={({ pressed }) => [
+            styles.transcriptionButton,
+            (!recording || transcription.status === "loading") &&
+              styles.disabledButton,
+            pressed && recording && styles.pressedButton,
+          ]}
+        >
+          <Text style={styles.buttonText}>Transkrybuj</Text>
+        </Pressable>
+
+        {transcription.status === "loading" && (
+          <View style={styles.transcriptionLoading} accessibilityLiveRegion="polite">
+            <ActivityIndicator color="#176B5B" />
+            <Text style={styles.transcriptionLoadingText}>
+              Transkrypcja w toku...
+            </Text>
+          </View>
+        )}
+
+        {transcription.error && (
+          <View style={styles.messageBox} accessibilityLiveRegion="assertive">
+            <Text style={styles.errorText}>
+              {transcription.error.message}
+            </Text>
+            {(transcription.error.kind === "no_key" ||
+              transcription.error.kind === "invalid_key") && (
+              <Link href="/settings" asChild>
+                <Pressable accessibilityRole="link" style={styles.settingsButton}>
+                  <Text style={styles.settingsButtonText}>
+                    Otwórz ustawienia klucza
+                  </Text>
+                </Pressable>
+              </Link>
+            )}
+          </View>
+        )}
+
+        {transcription.status === "done" && (
+          <View style={styles.transcriptionResult}>
+            <Text style={styles.resultTitle}>Transkrypcja</Text>
+            <TextInput
+              accessibilityLabel="Transkrypcja nagrania"
+              editable={false}
+              multiline
+              scrollEnabled
+              style={styles.transcriptionText}
+              textAlignVertical="top"
+              value={transcription.text}
+            />
+          </View>
+        )}
+
+        {(transcription.status === "done" ||
+          transcription.status === "error") && (
+          <Pressable
+            accessibilityRole="button"
+            onPress={transcription.reset}
+            style={styles.resetButton}
+          >
+            <Text style={styles.resetButtonText}>Wyczyść transkrypcję</Text>
+          </Pressable>
+        )}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -167,7 +254,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#F5F7FA",
   },
   container: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
@@ -296,6 +383,53 @@ const styles = StyleSheet.create({
     color: "#8E2530",
     fontSize: 15,
     fontWeight: "700",
+    textDecorationLine: "underline",
+  },
+  transcriptionButton: {
+    minHeight: 52,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    maxWidth: 380,
+    marginTop: 18,
+    paddingHorizontal: 24,
+    borderRadius: 26,
+    backgroundColor: "#176B5B",
+  },
+  transcriptionLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 16,
+  },
+  transcriptionLoadingText: {
+    color: "#52647A",
+    fontSize: 14,
+  },
+  transcriptionResult: {
+    width: "100%",
+    maxWidth: 380,
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: "#E8F2EF",
+  },
+  transcriptionText: {
+    minHeight: 140,
+    maxHeight: 280,
+    padding: 0,
+    color: "#244C44",
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  resetButton: {
+    marginTop: 12,
+    padding: 8,
+  },
+  resetButtonText: {
+    color: "#176B5B",
+    fontSize: 14,
+    fontWeight: "600",
     textDecorationLine: "underline",
   },
   result: {
