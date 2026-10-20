@@ -1,3 +1,4 @@
+import { useApiKey } from "@/hooks/useApiKey";
 import { Link } from "expo-router";
 import { useRef, useState } from "react";
 import {
@@ -9,7 +10,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useApiKey } from "@/hooks/useApiKey";
 
 export default function Settings() {
   const { apiKey, loading, error, save, remove } = useApiKey();

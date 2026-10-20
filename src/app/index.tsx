@@ -1,4 +1,13 @@
-import { Link, useFocusEffect } from "expo-router";
+import { ApiKeyNotice } from "@/components/ApiKeyNotice";
+import { ErrorBox } from "@/components/ErrorBox";
+import { FollowUpCard } from "@/components/FollowUpCard";
+import { RecorderCard } from "@/components/RecorderCard";
+import { SummaryCard } from "@/components/SummaryCard";
+import { useApiKey } from "@/hooks/useApiKey";
+import { useRecording } from "@/hooks/useRecording";
+import { useSummary } from "@/hooks/useSummary";
+import { useTranscription } from "@/hooks/useTranscription";
+import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -10,11 +19,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useApiKey } from "@/hooks/useApiKey";
-import { useRecording } from "@/hooks/useRecording";
-import { useSummary } from "@/hooks/useSummary";
-import { useTranscription } from "@/hooks/useTranscription";
-import { SummaryCard } from "@/components/SummaryCard";
 import {
   getFollowUp,
   mergeTranscripts,
@@ -63,6 +67,37 @@ export default function Index() {
       : null;
   const showSettingsButton =
     error?.code === "permission-denied" || error?.code === "settings-failed";
+  const showMissingKeyNotice =
+    !apiKeyLoading && !apiKey && !apiKeyError;
+  const canTranscribe =
+    Boolean(recording) &&
+    transcription.status !== "loading" &&
+    followUpQuestion === null &&
+    followUpPhase === "idle" &&
+    !followUpUsed;
+  const canSummarize =
+    Boolean(transcription.text) &&
+    summary.status !== "loading" &&
+    followUpPhase === "idle";
+  const canAnswerFollowUp =
+    followUpPhase !== "recording" ||
+    isRecording ||
+    transcriptionStatus === "error" ||
+    !error;
+  const showSkipFollowUp =
+    followUpPhase === "idle" ||
+    (!isRecording &&
+      (transcriptionStatus === "error" || Boolean(error)));
+  const followUpButtonLabel =
+    followUpPhase === "recording"
+      ? isRecording
+        ? "Zatrzymaj odpowiedź"
+        : transcriptionStatus === "loading"
+          ? "Transkrypcja odpowiedzi..."
+          : summaryStatus === "loading"
+            ? "Aktualizowanie podsumowania..."
+            : "Odpowiedz głosem"
+      : "Odpowiedz głosem";
 
   const resetFollowUp = () => {
     setFullTranscript("");
@@ -187,140 +222,53 @@ export default function Index() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.eyebrow}>VOICEAPP</Text>
-        <Text style={styles.title}>Nagranie wywiadu</Text>
+        <Text style={styles.title}>Wywiad medyczny</Text>
         <Text style={styles.description}>
           Nagraj odpowiedzi przed teleporadą. Nagranie może trwać maksymalnie 3
           minuty.
         </Text>
 
-        {!apiKeyLoading && !apiKey && !apiKeyError && (
-          <View style={styles.apiKeyNotice}>
-            <Text style={styles.apiKeyNoticeText}>
-              Nie zapisano klucza API Groq. Nagrywanie działa bez klucza; będzie
-              potrzebny dopiero przy transkrypcji.
-            </Text>
-            <Link href="/settings" asChild>
-              <Pressable accessibilityRole="link" style={styles.apiKeyLink}>
-                <Text style={styles.apiKeyLinkText}>
-                  Otwórz ustawienia klucza
-                </Text>
-              </Pressable>
-            </Link>
-          </View>
-        )}
+        <ApiKeyNotice
+          showMissingKeyNotice={showMissingKeyNotice}
+          hasApiKey={!apiKeyLoading && Boolean(apiKey)}
+          error={apiKeyError}
+        />
 
-        {apiKeyError && (
-          <View style={styles.apiKeyNotice} accessibilityLiveRegion="assertive">
-            <Text style={styles.apiKeyErrorText}>{apiKeyError}</Text>
-            <Link href="/settings" asChild>
-              <Pressable accessibilityRole="link" style={styles.apiKeyLink}>
-                <Text style={styles.apiKeyLinkText}>
-                  Otwórz ustawienia klucza
-                </Text>
-              </Pressable>
-            </Link>
-          </View>
-        )}
-
-        {!apiKeyLoading && apiKey && (
-          <Link href="/settings" asChild>
-            <Pressable accessibilityRole="link" style={styles.apiKeyLink}>
-              <Text style={styles.apiKeyLinkText}>Ustawienia klucza API</Text>
-            </Pressable>
-          </Link>
-        )}
-
-        <View style={styles.recorder}>
-          <Text
-            accessibilityLiveRegion="polite"
-            style={[styles.timer, isRecording && styles.timerRecording]}
-          >
-            {formatTime(time)}
-          </Text>
-          <Text style={styles.status}>
-            {isRecording
+        <RecorderCard
+          time={time}
+          status={
+            isRecording
               ? followUpPhase === "recording"
                 ? "Nagrywanie odpowiedzi"
                 : "Nagrywanie w toku"
               : state === "stopped"
                 ? "Nagranie zakończone"
-                : "Gotowy do nagrania"}
-          </Text>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={isRecording ? "Zatrzymaj nagranie" : "Rozpocznij nagranie"}
-            disabled={
-              isProcessing ||
-              (followUpPhase === "recording" && !isRecording)
-            }
-            onPress={isRecording ? stop : startNewRecording}
-            style={({ pressed }) => [
-              styles.recordButton,
-              isRecording && styles.stopButton,
-              pressed && !isProcessing && styles.pressedButton,
-              isProcessing && styles.disabledButton,
-            ]}
-          >
-            <Text style={styles.buttonText}>
-              {isProcessing
-                ? "Chwila..."
-                : isRecording
-                  ? "Zatrzymaj"
-                  : "Rozpocznij nagrywanie"}
-            </Text>
-          </Pressable>
-        </View>
+                : "Gotowy do nagrania"
+          }
+          isRecording={isRecording}
+          isProcessing={isProcessing}
+          disabled={
+            isProcessing ||
+            (followUpPhase === "recording" && !isRecording)
+          }
+          onPress={isRecording ? stop : startNewRecording}
+        />
 
         {error && (
-          <View style={styles.messageBox} accessibilityLiveRegion="assertive">
-            <Text style={styles.errorText}>{error.message}</Text>
-            {showSettingsButton && (
-              <Pressable
-                accessibilityRole="button"
-                onPress={openSettings}
-                style={styles.settingsButton}
-              >
-                <Text style={styles.settingsButtonText}>
-                  Otwórz ustawienia
-                </Text>
-              </Pressable>
-            )}
-          </View>
-        )}
-
-        {recording && (
-          <View style={styles.result} accessibilityLiveRegion="polite">
-            <Text style={styles.resultTitle}>Dane nagrania (testowo)</Text>
-            <Text selectable style={styles.resultText}>
-              URI: {recording.uri}
-            </Text>
-            <Text style={styles.resultText}>
-              Długość: {formatDuration(recording.durationSec)}
-            </Text>
-            <Text style={styles.resultText}>Typ: {recording.mimeType}</Text>
-          </View>
+          <ErrorBox
+            message={error.message}
+            onOpenSettings={showSettingsButton ? openSettings : undefined}
+          />
         )}
 
         <Pressable
           accessibilityRole="button"
-          disabled={
-            !recording ||
-            transcription.status === "loading" ||
-            followUpQuestion !== null ||
-            followUpPhase !== "idle" ||
-            followUpUsed
-          }
+          disabled={!canTranscribe}
           onPress={startTranscription}
           style={({ pressed }) => [
             styles.transcriptionButton,
-            (!recording ||
-              transcription.status === "loading" ||
-              followUpQuestion !== null ||
-              followUpPhase !== "idle" ||
-              followUpUsed) &&
-              styles.disabledButton,
-            pressed && recording && styles.pressedButton,
+            !canTranscribe && styles.disabledButton,
+            pressed && canTranscribe && styles.pressedButton,
           ]}
         >
           <Text style={styles.buttonText}>Transkrybuj</Text>
@@ -338,24 +286,13 @@ export default function Index() {
         {transcription.status === "done" && Boolean(transcription.text) && (
           <Pressable
             accessibilityRole="button"
-            disabled={
-              !transcription.text ||
-              summary.status === "loading" ||
-              followUpPhase !== "idle"
-            }
+            disabled={!canSummarize}
             onPress={startSummary}
             style={({ pressed }) => [
               styles.transcriptionButton,
               styles.summaryButton,
-              (!transcription.text ||
-                summary.status === "loading" ||
-                followUpPhase !== "idle") &&
-                styles.disabledButton,
-              pressed &&
-                transcription.text &&
-                summary.status !== "loading" &&
-                followUpPhase === "idle" &&
-                styles.pressedButton,
+              !canSummarize && styles.disabledButton,
+              pressed && canSummarize && styles.pressedButton,
             ]}
           >
             <Text style={styles.buttonText}>Podsumuj</Text>
@@ -372,19 +309,13 @@ export default function Index() {
         )}
 
         {summary.error && (
-          <View style={styles.messageBox} accessibilityLiveRegion="assertive">
-            <Text style={styles.errorText}>{summary.error.message}</Text>
-            {(summary.error.kind === "no_key" ||
-              summary.error.kind === "invalid_key") && (
-              <Link href="/settings" asChild>
-                <Pressable accessibilityRole="link" style={styles.settingsButton}>
-                  <Text style={styles.settingsButtonText}>
-                    Otwórz ustawienia klucza
-                  </Text>
-                </Pressable>
-              </Link>
-            )}
-          </View>
+          <ErrorBox
+            message={summary.error.message}
+            settingsLink={
+              summary.error.kind === "no_key" ||
+              summary.error.kind === "invalid_key"
+            }
+          />
         )}
 
         {summary.status === "done" && summary.summary && (
@@ -392,67 +323,24 @@ export default function Index() {
         )}
 
         {visibleFollowUp && (
-          <View style={styles.followUpCard}>
-            <Text style={styles.followUpQuestion}>
-              {visibleFollowUp.question}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              disabled={
-                followUpPhase === "recording" &&
-                !isRecording &&
-                transcriptionStatus !== "error" &&
-                !error
-              }
-              onPress={handleFollowUpAction}
-              style={({ pressed }) => [
-                styles.transcriptionButton,
-                styles.summaryButton,
-                pressed && styles.pressedButton,
-              ]}
-            >
-              <Text style={styles.buttonText}>
-                {followUpPhase === "recording"
-                  ? isRecording
-                    ? "Zatrzymaj odpowiedź"
-                    : transcriptionStatus === "loading"
-                      ? "Transkrypcja odpowiedzi..."
-                      : summaryStatus === "loading"
-                        ? "Aktualizowanie podsumowania..."
-                        : "Odpowiedz głosem"
-                  : "Odpowiedz głosem"}
-              </Text>
-            </Pressable>
-            {(followUpPhase === "idle" ||
-              (!isRecording &&
-                (transcriptionStatus === "error" || Boolean(error)))) && (
-              <Pressable
-                accessibilityRole="button"
-                onPress={skipFollowUp}
-                style={styles.skipButton}
-              >
-                <Text style={styles.resetButtonText}>Pomiń</Text>
-              </Pressable>
-            )}
-          </View>
+          <FollowUpCard
+            question={visibleFollowUp.question}
+            buttonLabel={followUpButtonLabel}
+            disabled={!canAnswerFollowUp}
+            showSkip={showSkipFollowUp}
+            onAnswer={handleFollowUpAction}
+            onSkip={skipFollowUp}
+          />
         )}
 
         {transcription.error && (
-          <View style={styles.messageBox} accessibilityLiveRegion="assertive">
-            <Text style={styles.errorText}>
-              {transcription.error.message}
-            </Text>
-            {(transcription.error.kind === "no_key" ||
-              transcription.error.kind === "invalid_key") && (
-              <Link href="/settings" asChild>
-                <Pressable accessibilityRole="link" style={styles.settingsButton}>
-                  <Text style={styles.settingsButtonText}>
-                    Otwórz ustawienia klucza
-                  </Text>
-                </Pressable>
-              </Link>
-            )}
-          </View>
+          <ErrorBox
+            message={transcription.error.message}
+            settingsLink={
+              transcription.error.kind === "no_key" ||
+              transcription.error.kind === "invalid_key"
+            }
+          />
         )}
 
         {(transcription.status === "done" || fullTranscript.length > 0) && (
@@ -487,18 +375,6 @@ export default function Index() {
   );
 }
 
-function formatTime(seconds: number) {
-  const totalSeconds = Math.floor(seconds);
-  const minutes = Math.floor(totalSeconds / 60);
-  const remainingSeconds = totalSeconds % 60;
-
-  return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
-}
-
-function formatDuration(seconds: number) {
-  return `${seconds.toFixed(1)} s`;
-}
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -507,7 +383,7 @@ const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
     paddingHorizontal: 24,
     paddingVertical: 32,
   },
@@ -532,75 +408,6 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     textAlign: "center",
   },
-  apiKeyNotice: {
-    width: "100%",
-    maxWidth: 380,
-    marginTop: 20,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: "#FFF8E8",
-  },
-  apiKeyNoticeText: {
-    color: "#70521A",
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  apiKeyErrorText: {
-    color: "#8E2530",
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  apiKeyLink: {
-    alignSelf: "flex-start",
-    marginTop: 8,
-    paddingVertical: 6,
-  },
-  apiKeyLinkText: {
-    color: "#176B5B",
-    fontSize: 14,
-    fontWeight: "700",
-    textDecorationLine: "underline",
-  },
-  recorder: {
-    width: "100%",
-    maxWidth: 380,
-    alignItems: "center",
-    marginTop: 44,
-    padding: 28,
-    borderRadius: 24,
-    backgroundColor: "#FFFFFF",
-    shadowColor: "#142B45",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    elevation: 3,
-  },
-  timer: {
-    color: "#142B45",
-    fontSize: 56,
-    fontVariant: ["tabular-nums"],
-    fontWeight: "600",
-  },
-  timerRecording: {
-    color: "#C43E4B",
-  },
-  status: {
-    marginTop: 4,
-    color: "#68798B",
-    fontSize: 15,
-  },
-  recordButton: {
-    minHeight: 56,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 28,
-    paddingHorizontal: 28,
-    borderRadius: 28,
-    backgroundColor: "#176B5B",
-  },
-  stopButton: {
-    backgroundColor: "#B63845",
-  },
   pressedButton: {
     opacity: 0.82,
   },
@@ -611,30 +418,6 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "700",
-  },
-  messageBox: {
-    width: "100%",
-    maxWidth: 380,
-    marginTop: 20,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: "#FFF0F0",
-  },
-  errorText: {
-    color: "#8E2530",
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  settingsButton: {
-    alignSelf: "flex-start",
-    marginTop: 12,
-    paddingVertical: 8,
-  },
-  settingsButtonText: {
-    color: "#8E2530",
-    fontSize: 15,
-    fontWeight: "700",
-    textDecorationLine: "underline",
   },
   transcriptionButton: {
     minHeight: 52,
@@ -650,25 +433,6 @@ const styles = StyleSheet.create({
   summaryButton: {
     marginTop: 12,
     backgroundColor: "#244C44",
-  },
-  followUpCard: {
-    width: "100%",
-    maxWidth: 380,
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: "#E8F2EF",
-  },
-  followUpQuestion: {
-    color: "#17483D",
-    fontSize: 16,
-    fontWeight: "600",
-    lineHeight: 24,
-  },
-  skipButton: {
-    alignSelf: "center",
-    marginTop: 8,
-    padding: 8,
   },
   transcriptionLoading: {
     flexDirection: "row",
@@ -688,6 +452,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: "#E8F2EF",
   },
+  resultTitle: {
+    marginBottom: 8,
+    color: "#17483D",
+    fontSize: 15,
+    fontWeight: "700",
+  },
   transcriptionText: {
     minHeight: 140,
     maxHeight: 280,
@@ -705,25 +475,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     textDecorationLine: "underline",
-  },
-  result: {
-    width: "100%",
-    maxWidth: 380,
-    marginTop: 20,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: "#E8F2EF",
-  },
-  resultTitle: {
-    marginBottom: 8,
-    color: "#17483D",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  resultText: {
-    marginTop: 4,
-    color: "#244C44",
-    fontSize: 14,
-    lineHeight: 20,
   },
 });
