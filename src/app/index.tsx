@@ -12,7 +12,9 @@ import {
 } from "react-native";
 import { useApiKey } from "@/hooks/useApiKey";
 import { useRecording } from "@/hooks/useRecording";
+import { useSummary } from "@/hooks/useSummary";
 import { useTranscription } from "@/hooks/useTranscription";
+import { SummaryCard } from "@/components/SummaryCard";
 
 export default function Index() {
   const { apiKey, loading: apiKeyLoading, error: apiKeyError, refresh } =
@@ -29,13 +31,27 @@ export default function Index() {
     openSettings,
   } = useRecording();
   const transcription = useTranscription();
+  const summary = useSummary();
   const isRecording = state === "recording";
   const showSettingsButton =
     error?.code === "permission-denied" || error?.code === "settings-failed";
 
   const startNewRecording = () => {
     transcription.reset();
+    summary.reset();
     void start();
+  };
+
+  const resetResults = () => {
+    transcription.reset();
+    summary.reset();
+  };
+
+  const startTranscription = () => {
+    summary.reset();
+    if (recording) {
+      void transcription.run(recording, apiKey);
+    }
   };
 
   useFocusEffect(
@@ -164,11 +180,7 @@ export default function Index() {
         <Pressable
           accessibilityRole="button"
           disabled={!recording || transcription.status === "loading"}
-          onPress={() => {
-            if (recording) {
-              void transcription.run(recording, apiKey);
-            }
-          }}
+          onPress={startTranscription}
           style={({ pressed }) => [
             styles.transcriptionButton,
             (!recording || transcription.status === "loading") &&
@@ -186,6 +198,57 @@ export default function Index() {
               Transkrypcja w toku...
             </Text>
           </View>
+        )}
+
+        {transcription.status === "done" && Boolean(transcription.text) && (
+          <Pressable
+            accessibilityRole="button"
+            disabled={!transcription.text || summary.status === "loading"}
+            onPress={() =>
+              void summary.run(transcription.text, apiKey ?? "")
+            }
+            style={({ pressed }) => [
+              styles.transcriptionButton,
+              styles.summaryButton,
+              (!transcription.text || summary.status === "loading") &&
+                styles.disabledButton,
+              pressed &&
+                transcription.text &&
+                summary.status !== "loading" &&
+                styles.pressedButton,
+            ]}
+          >
+            <Text style={styles.buttonText}>Podsumuj</Text>
+          </Pressable>
+        )}
+
+        {summary.status === "loading" && (
+          <View style={styles.transcriptionLoading} accessibilityLiveRegion="polite">
+            <ActivityIndicator color="#176B5B" />
+            <Text style={styles.transcriptionLoadingText}>
+              Przygotowywanie podsumowania...
+            </Text>
+          </View>
+        )}
+
+        {summary.error && (
+          <View style={styles.messageBox} accessibilityLiveRegion="assertive">
+            <Text style={styles.errorText}>{summary.error.message}</Text>
+            {(summary.error.kind === "no_key" ||
+              summary.error.kind === "invalid_key") && (
+              <Link href="/settings" asChild>
+                <Pressable accessibilityRole="link" style={styles.settingsButton}>
+                  <Text style={styles.settingsButtonText}>
+                    Otwórz ustawienia klucza
+                  </Text>
+                </Pressable>
+              </Link>
+            )}
+          </View>
+        )}
+
+        {summary.status === "done" && summary.summary && (
+          <SummaryCard summary={summary.summary} />
         )}
 
         {transcription.error && (
@@ -222,13 +285,15 @@ export default function Index() {
         )}
 
         {(transcription.status === "done" ||
-          transcription.status === "error") && (
+          transcription.status === "error" ||
+          summary.status === "done" ||
+          summary.status === "error") && (
           <Pressable
             accessibilityRole="button"
-            onPress={transcription.reset}
+            onPress={resetResults}
             style={styles.resetButton}
           >
-            <Text style={styles.resetButtonText}>Wyczyść transkrypcję</Text>
+            <Text style={styles.resetButtonText}>Wyczyść wyniki</Text>
           </Pressable>
         )}
       </ScrollView>
@@ -395,6 +460,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     borderRadius: 26,
     backgroundColor: "#176B5B",
+  },
+  summaryButton: {
+    marginTop: 12,
+    backgroundColor: "#244C44",
   },
   transcriptionLoading: {
     flexDirection: "row",
