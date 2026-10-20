@@ -1,7 +1,13 @@
+import { Link, useFocusEffect } from "expo-router";
+import { useCallback, useRef } from "react";
 import { Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import { useApiKey } from "@/hooks/useApiKey";
 import { useRecording } from "@/hooks/useRecording";
 
 export default function Index() {
+  const { apiKey, loading: apiKeyLoading, error: apiKeyError, refresh } =
+    useApiKey();
+  const hasFocused = useRef(false);
   const {
     state,
     time,
@@ -16,6 +22,15 @@ export default function Index() {
   const showSettingsButton =
     error?.code === "permission-denied" || error?.code === "settings-failed";
 
+  useFocusEffect(
+    useCallback(() => {
+      if (hasFocused.current) {
+        void refresh();
+      }
+      hasFocused.current = true;
+    }, [refresh]),
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
@@ -25,6 +40,43 @@ export default function Index() {
           Nagraj odpowiedzi przed teleporadą. Nagranie może trwać maksymalnie 3
           minuty.
         </Text>
+
+        {!apiKeyLoading && !apiKey && !apiKeyError && (
+          <View style={styles.apiKeyNotice}>
+            <Text style={styles.apiKeyNoticeText}>
+              Nie zapisano klucza API Groq. Nagrywanie działa bez klucza; będzie
+              potrzebny dopiero przy transkrypcji.
+            </Text>
+            <Link href="/settings" asChild>
+              <Pressable accessibilityRole="link" style={styles.apiKeyLink}>
+                <Text style={styles.apiKeyLinkText}>
+                  Otwórz ustawienia klucza
+                </Text>
+              </Pressable>
+            </Link>
+          </View>
+        )}
+
+        {apiKeyError && (
+          <View style={styles.apiKeyNotice} accessibilityLiveRegion="assertive">
+            <Text style={styles.apiKeyErrorText}>{apiKeyError}</Text>
+            <Link href="/settings" asChild>
+              <Pressable accessibilityRole="link" style={styles.apiKeyLink}>
+                <Text style={styles.apiKeyLinkText}>
+                  Otwórz ustawienia klucza
+                </Text>
+              </Pressable>
+            </Link>
+          </View>
+        )}
+
+        {!apiKeyLoading && apiKey && (
+          <Link href="/settings" asChild>
+            <Pressable accessibilityRole="link" style={styles.apiKeyLink}>
+              <Text style={styles.apiKeyLinkText}>Ustawienia klucza API</Text>
+            </Pressable>
+          </Link>
+        )}
 
         <View style={styles.recorder}>
           <Text
@@ -141,6 +193,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 24,
     textAlign: "center",
+  },
+  apiKeyNotice: {
+    width: "100%",
+    maxWidth: 380,
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: "#FFF8E8",
+  },
+  apiKeyNoticeText: {
+    color: "#70521A",
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  apiKeyErrorText: {
+    color: "#8E2530",
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  apiKeyLink: {
+    alignSelf: "flex-start",
+    marginTop: 8,
+    paddingVertical: 6,
+  },
+  apiKeyLinkText: {
+    color: "#176B5B",
+    fontSize: 14,
+    fontWeight: "700",
+    textDecorationLine: "underline",
   },
   recorder: {
     width: "100%",
