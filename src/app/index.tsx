@@ -1,5 +1,5 @@
 import { Link, useFocusEffect } from "expo-router";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -15,6 +15,13 @@ import { useRecording } from "@/hooks/useRecording";
 import { useSummary } from "@/hooks/useSummary";
 import { useTranscription } from "@/hooks/useTranscription";
 import { SummaryCard } from "@/components/SummaryCard";
+import {
+  getFollowUp,
+  mergeTranscripts,
+  type FollowUp,
+} from "../../lib/followUp";
+
+type FollowUpPhase = "idle" | "recording" | "complete";
 
 export default function Index() {
   const { apiKey, loading: apiKeyLoading, error: apiKeyError, refresh } =
@@ -32,26 +39,92 @@ export default function Index() {
   } = useRecording();
   const transcription = useTranscription();
   const summary = useSummary();
+  const [fullTranscript, setFullTranscript] = useState("");
+  const [followUpUsed, setFollowUpUsed] = useState(false);
+  const [followUpQuestion, setFollowUpQuestion] = useState<FollowUp | null>(
+    null,
+  );
+  const [followUpPhase, setFollowUpPhase] =
+    useState<FollowUpPhase>("idle");
+  const followUpAnswerProcessed = useRef(false);
+  const followUpRequestId = useRef(0);
   const isRecording = state === "recording";
+  const {
+    run: runTranscription,
+    status: transcriptionStatus,
+  } = transcription;
+  const { run: runSummary, status: summaryStatus } = summary;
+  const followUp = summary.summary ? getFollowUp(summary.summary) : null;
+  const visibleFollowUp =
+    summary.status === "done" &&
+    !followUpUsed &&
+    followUpPhase !== "complete"
+      ? followUpQuestion ?? followUp
+      : null;
   const showSettingsButton =
     error?.code === "permission-denied" || error?.code === "settings-failed";
+
+  const resetFollowUp = () => {
+    setFullTranscript("");
+    setFollowUpUsed(false);
+    setFollowUpQuestion(null);
+    setFollowUpPhase("idle");
+    followUpAnswerProcessed.current = false;
+    followUpRequestId.current += 1;
+  };
 
   const startNewRecording = () => {
     transcription.reset();
     summary.reset();
+    resetFollowUp();
     void start();
   };
 
   const resetResults = () => {
     transcription.reset();
     summary.reset();
+    resetFollowUp();
   };
 
   const startTranscription = () => {
     summary.reset();
+    resetFollowUp();
     if (recording) {
       void transcription.run(recording, apiKey);
     }
+  };
+
+  const startSummary = () => {
+    setFullTranscript(transcription.text);
+    void summary.run(transcription.text, apiKey ?? "");
+  };
+
+  const startFollowUp = (question: FollowUp) => {
+    setFollowUpQuestion(question);
+    followUpRequestId.current += 1;
+    followUpAnswerProcessed.current = false;
+    transcription.reset();
+    setFollowUpPhase("recording");
+    void start();
+  };
+
+  const handleFollowUpAction = () => {
+    if (followUpPhase === "recording") {
+      if (isRecording) {
+        void stop();
+      } else if (visibleFollowUp && (transcription.error || error)) {
+        startFollowUp(visibleFollowUp);
+      }
+    } else if (followUpPhase === "idle" && visibleFollowUp) {
+      startFollowUp(visibleFollowUp);
+    }
+  };
+
+  const skipFollowUp = () => {
+    followUpRequestId.current += 1;
+    setFollowUpUsed(true);
+    setFollowUpQuestion(null);
+    setFollowUpPhase("idle");
   };
 
   useFocusEffect(
@@ -62,6 +135,53 @@ export default function Index() {
       hasFocused.current = true;
     }, [refresh]),
   );
+
+  useEffect(() => {
+    if (
+      followUpPhase === "recording" &&
+      state === "stopped" &&
+      recording &&
+      transcriptionStatus === "idle" &&
+      !followUpAnswerProcessed.current
+    ) {
+      const currentRequestId = followUpRequestId.current;
+      void (async () => {
+        const answer = await runTranscription(recording, apiKey);
+        if (
+          !answer ||
+          currentRequestId !== followUpRequestId.current ||
+          followUpAnswerProcessed.current ||
+          !followUpQuestion
+        ) {
+          return;
+        }
+
+        followUpAnswerProcessed.current = true;
+        const combinedTranscript = mergeTranscripts(
+          fullTranscript,
+          followUpQuestion.question,
+          answer,
+        );
+        setFollowUpQuestion(null);
+        setFullTranscript(combinedTranscript);
+        setFollowUpUsed(true);
+        await runSummary(combinedTranscript, apiKey ?? "");
+        if (currentRequestId === followUpRequestId.current) {
+          setFollowUpPhase("complete");
+        }
+      })();
+    }
+  }, [
+    apiKey,
+    followUpPhase,
+    followUpQuestion,
+    fullTranscript,
+    recording,
+    runTranscription,
+    state,
+    runSummary,
+    transcriptionStatus,
+  ]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -119,7 +239,9 @@ export default function Index() {
           </Text>
           <Text style={styles.status}>
             {isRecording
-              ? "Nagrywanie w toku"
+              ? followUpPhase === "recording"
+                ? "Nagrywanie odpowiedzi"
+                : "Nagrywanie w toku"
               : state === "stopped"
                 ? "Nagranie zakończone"
                 : "Gotowy do nagrania"}
@@ -128,7 +250,10 @@ export default function Index() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={isRecording ? "Zatrzymaj nagranie" : "Rozpocznij nagranie"}
-            disabled={isProcessing}
+            disabled={
+              isProcessing ||
+              (followUpPhase === "recording" && !isRecording)
+            }
             onPress={isRecording ? stop : startNewRecording}
             style={({ pressed }) => [
               styles.recordButton,
@@ -179,11 +304,21 @@ export default function Index() {
 
         <Pressable
           accessibilityRole="button"
-          disabled={!recording || transcription.status === "loading"}
+          disabled={
+            !recording ||
+            transcription.status === "loading" ||
+            followUpQuestion !== null ||
+            followUpPhase !== "idle" ||
+            followUpUsed
+          }
           onPress={startTranscription}
           style={({ pressed }) => [
             styles.transcriptionButton,
-            (!recording || transcription.status === "loading") &&
+            (!recording ||
+              transcription.status === "loading" ||
+              followUpQuestion !== null ||
+              followUpPhase !== "idle" ||
+              followUpUsed) &&
               styles.disabledButton,
             pressed && recording && styles.pressedButton,
           ]}
@@ -203,18 +338,23 @@ export default function Index() {
         {transcription.status === "done" && Boolean(transcription.text) && (
           <Pressable
             accessibilityRole="button"
-            disabled={!transcription.text || summary.status === "loading"}
-            onPress={() =>
-              void summary.run(transcription.text, apiKey ?? "")
+            disabled={
+              !transcription.text ||
+              summary.status === "loading" ||
+              followUpPhase !== "idle"
             }
+            onPress={startSummary}
             style={({ pressed }) => [
               styles.transcriptionButton,
               styles.summaryButton,
-              (!transcription.text || summary.status === "loading") &&
+              (!transcription.text ||
+                summary.status === "loading" ||
+                followUpPhase !== "idle") &&
                 styles.disabledButton,
               pressed &&
                 transcription.text &&
                 summary.status !== "loading" &&
+                followUpPhase === "idle" &&
                 styles.pressedButton,
             ]}
           >
@@ -251,6 +391,52 @@ export default function Index() {
           <SummaryCard summary={summary.summary} />
         )}
 
+        {visibleFollowUp && (
+          <View style={styles.followUpCard}>
+            <Text style={styles.followUpQuestion}>
+              {visibleFollowUp.question}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={
+                followUpPhase === "recording" &&
+                !isRecording &&
+                transcriptionStatus !== "error" &&
+                !error
+              }
+              onPress={handleFollowUpAction}
+              style={({ pressed }) => [
+                styles.transcriptionButton,
+                styles.summaryButton,
+                pressed && styles.pressedButton,
+              ]}
+            >
+              <Text style={styles.buttonText}>
+                {followUpPhase === "recording"
+                  ? isRecording
+                    ? "Zatrzymaj odpowiedź"
+                    : transcriptionStatus === "loading"
+                      ? "Transkrypcja odpowiedzi..."
+                      : summaryStatus === "loading"
+                        ? "Aktualizowanie podsumowania..."
+                        : "Odpowiedz głosem"
+                  : "Odpowiedz głosem"}
+              </Text>
+            </Pressable>
+            {(followUpPhase === "idle" ||
+              (!isRecording &&
+                (transcriptionStatus === "error" || Boolean(error)))) && (
+              <Pressable
+                accessibilityRole="button"
+                onPress={skipFollowUp}
+                style={styles.skipButton}
+              >
+                <Text style={styles.resetButtonText}>Pomiń</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+
         {transcription.error && (
           <View style={styles.messageBox} accessibilityLiveRegion="assertive">
             <Text style={styles.errorText}>
@@ -269,7 +455,7 @@ export default function Index() {
           </View>
         )}
 
-        {transcription.status === "done" && (
+        {(transcription.status === "done" || fullTranscript.length > 0) && (
           <View style={styles.transcriptionResult}>
             <Text style={styles.resultTitle}>Transkrypcja</Text>
             <TextInput
@@ -279,7 +465,7 @@ export default function Index() {
               scrollEnabled
               style={styles.transcriptionText}
               textAlignVertical="top"
-              value={transcription.text}
+              value={fullTranscript || transcription.text}
             />
           </View>
         )}
@@ -464,6 +650,25 @@ const styles = StyleSheet.create({
   summaryButton: {
     marginTop: 12,
     backgroundColor: "#244C44",
+  },
+  followUpCard: {
+    width: "100%",
+    maxWidth: 380,
+    marginTop: 12,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: "#E8F2EF",
+  },
+  followUpQuestion: {
+    color: "#17483D",
+    fontSize: 16,
+    fontWeight: "600",
+    lineHeight: 24,
+  },
+  skipButton: {
+    alignSelf: "center",
+    marginTop: 8,
+    padding: 8,
   },
   transcriptionLoading: {
     flexDirection: "row",

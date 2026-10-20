@@ -57,7 +57,10 @@ export function useTranscription() {
   }, []);
 
   const run = useCallback(
-    async (recording: Recording, apiKey: string | null) => {
+    async (
+      recording: Recording,
+      apiKey: string | null,
+    ): Promise<string | null> => {
       const currentRequestId = ++requestId.current;
       setStatus("loading");
       setText("");
@@ -68,7 +71,9 @@ export function useTranscription() {
         if (requestId.current === currentRequestId) {
           setText(result);
           setStatus("done");
+          return result;
         }
+        return null;
       } catch (cause) {
         if (requestId.current === currentRequestId) {
           const kind =
@@ -82,6 +87,7 @@ export function useTranscription() {
           });
           setStatus("error");
         }
+        return null;
       }
     },
     [],
